@@ -9,7 +9,7 @@
 //
 //Автор turtlefly@yandex.ru
 //https://github.com/TurtleFlyRU
-//Страница проекта 
+//Страница проекта https://github.com/TurtleFlyRU/ESP8266-01_RebootRouter/
 //
 //Freeware
 //
