@@ -27,9 +27,10 @@
 #include <ESP8266WiFiMulti.h>
 #include <ESP8266HTTPClient.h>
 
-const char* devHostName = "ESP44-RELAY-ROUTER"; //Сетевое имя модуля, на ваше усмотрение
+const char* devHostName = "ESP-RELAY-ROUTER"; //Сетевое имя модуля, на ваше усмотрение
 const char* wifissid     = ""; //Укажите имя вашей WIFI сети к которой вы будете подключаться
 const char* wifipassword = ""; //Укажите пароль доступа к этой WIFI сети
+const uint32_t wifiConnectTimeoutMs = 10000; //Таймаут подключения к wifi
 
 const int CycleTime = 10000; //миллисекунды, длительность паузы в конце цикла опроса модема Yota
 const int ResetByDay = 12; //количество софт-ресетов модуля esp в день
@@ -152,18 +153,28 @@ void ResetCoil()
 /////////////////////////////////////////
 void setup() 
 {
-  Serial.begin(115200);
-  //Подключение к WIFI роутеру
-  WiFi.mode(WIFI_STA);
-  WiFi.hostname(devHostName);
-  WiFiMulti.addAP(wifissid, wifipassword); 
-
   //Реле на GPIO0, на реле задействованы контакты NC, т.е. для размыкания надо подать HI
   //Установим GPIO0 output low таким образом реле не под напряжением, 
   //а через контакты NC сетевое напряжение питает роутер
   pinMode(0, OUTPUT);
   digitalWrite(0, LOW); 
 
+  Serial.begin(115200);
+  delay(30000);
+  //Настройка WIFI
+  WiFi.mode(WIFI_STA);
+  WiFi.hostname(devHostName);
+  WiFiMulti.addAP(wifissid, wifipassword);
+  
+  //Подключение к WIFI
+  Serial.println("Connecting Wifi...");
+  if(WiFiMulti.run() == WL_CONNECTED) 
+  {
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+  }
   delay(1000);
 }
 
@@ -174,9 +185,10 @@ void setup()
 void loop()
 {
   cycle++; //увеличиваем счётчик циклов на 1
-
+  Serial.print("Cycle:"); Serial.println(cycle);
+  Serial.print("CycleLimit:"); Serial.println(CycleLimit);
   //Если подключены то отслеживаем страницу модема
-  if ((WiFiMulti.run() == WL_CONNECTED)) 
+  if ((WiFiMulti.run(wifiConnectTimeoutMs) == WL_CONNECTED)) 
   {
     int YotaStatus = HTTP_CONNECT();
     Serial.print("YotaStatus:"); Serial.println(YotaStatus);
@@ -186,8 +198,20 @@ void loop()
       cycle = 0;
       ResetCoil();
     }
+  }else
+  {
+    Serial.println("WiFi not connected!");
+    counterPingFailed++;
   }
 
+  if(counterPingFailed > 10)
+  {
+    ResetCoil();
+    cycle = 0;
+    counterPingFailed = 0;
+  }
+
+  
   //Если количество повторов цикла достигло ограничения, 
   //то перезагрузка роутера и модуля ESP
   //Т.к. иногда бывает ситуация:
