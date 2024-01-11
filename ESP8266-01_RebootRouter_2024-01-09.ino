@@ -139,7 +139,7 @@ return IntSubResult;
 /////////////////////////////////////////
 //Перередергивание (ВЫКЛ -> ВКЛ) реле
 /////////////////////////////////////////
-void ResetCoil()
+void RelayOnOff()
 {
   Serial.println("Router Power OFF");
   //Включаем реле - посылаем высокий уровень сигнала, т.е. у роутера пропадает питание.
@@ -208,7 +208,7 @@ void loop()
     if(YotaStatus == 0)
     {
       cycle = 0;
-      ResetCoil();
+      RelayOnOff();
     }
   }else
   {
@@ -220,7 +220,7 @@ void loop()
   //то ВЫКЛ/ВКЛ питание роутера и сами перезагрузимся.
   if(counterPingFailed > 10)
   {
-    ResetCoil();
+    RelayOnOff();
     cycle = 0;
     counterPingFailed = 0;
   }
@@ -237,7 +237,7 @@ void loop()
   //при вашем отстутствии на объекте.
   if(cycle >= CycleLimit)
   {
-    ResetCoil();
+    RelayOnOff();
     cycle = 0;
     ESP.restart();
   }
