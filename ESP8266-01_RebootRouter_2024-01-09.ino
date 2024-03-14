@@ -1,16 +1,11 @@
 //Название ESP8266-01_RebootRouter
-//Версия 2024-01-09
-//Используется модуль ESP8266 (Wi-Fi модуль ESP-01, ESP-01S) 
-//в паре с модулем реле для ESP-01.
+//Версия 2-2024-03-14
+//Используется модуль ESP8266-01 в паре с модулём реле для ESP01.
 //Для выкл-вкл питания роутера (передергивания питания) в случае отсутствия соединения с интернетом
-//или по прошествии какого-то интервала времени (например каждые 2 часа).
-//Подключение к интернету определяется путём опроса сервисной html страницы (http://10.0.0.1/status) модема Yota
-//и чтения уровня сигнала от вышки. Но есть нюансы. Иногда, не смотря на положительные показания модема, 
-//интернета нет и не будет до перезагрузки роутера. 
-//И чтобы не терять связь с объектом на длительное время, устроена принудительная перезагрузка
-//каждые 2 часа.
-//Это творение подойдет для устройств доступа к интернету на объектах
-//где осуществляется мониторинг климата, видеонаблюдение, охрана. 
+//или по прошествии какого-то интервала времени (например каждые 6 часов).
+//Отсутствие интернета определяется путём опроса сервисной html страницы (http://10.0.0.1/status) модема Yota
+//и чтения уровня сигнала от вышки. 
+//Если страница модема не открывается, если уровень сигнала < 1, будет перезагружен роутер.
 //
 //Автор turtlefly@yandex.ru
 //https://github.com/TurtleFlyRU
@@ -33,16 +28,19 @@
 #include <ESP8266HTTPClient.h>
 
 const char* devHostName = "ESP-RELAY-ROUTER"; //Сетевое имя модуля, на ваше усмотрение
-const char* wifissid     = ""; //Укажите имя вашей WIFI сети к которой вы будете подключаться
-const char* wifipassword = ""; //Укажите пароль доступа к этой WIFI сети
-const uint32_t wifiConnectTimeoutMs = 10000; //Таймаут подключения к wifi
+const char* wifissid     = "*****"; //Укажите имя вашей WIFI сети к которой вы будете подключаться
+const char* wifipassword = "*****"; //Укажите пароль доступа к этой WIFI сети
+const uint32_t wifiConnectTimeoutMs = 15000; //Таймаут подключения к wifi
 
-const int CycleTime = 10000; //миллисекунды, длительность паузы в конце цикла опроса модема Yota
-const int ResetByDay = 12; //количество софт-ресетов модуля esp в день
-const int CycleLimit = (24*60*60*1000) / CycleTime / ResetByDay; // вычисляемый лимит циклов работы модуля, при превышении лимита будет перезагрузка модуля
+const int pauseLoopMS = 15000; //миллисекунды, длительность паузы в конце цикла loop
+const int ResetByDay = 23; //количество софт-ресетов модуля esp в день
+const int CycleLimit = (24*60*60*1000) / pauseLoopMS / ResetByDay; // вычисляемый лимит циклов работы модуля, при превышении лимита будет перезагрузка модуля
 
 int cycle = 0; // счётчик главного цикла loop
-int counterPingFailed = 0; // счетчик неудавшихся обращений к сайту
+int counterHttpFailed = 0; // счетчик неудавшихся обращений к сайту
+int counterWIFIFailed = 0; // счетчик неудавшихся подключений к wifi
+int limitHttpFailed = 10; // счетчик неудавшихся обращений к сайту
+int limitWIFIFailed = 2; // счетчик неудавшихся подключений к wifi
 
 //Создаём объект WiFiMulti ->  класса ESP8266WiFiMulti
 ESP8266WiFiMulti WiFiMulti;
@@ -77,13 +75,11 @@ int HTTP_CONNECT()
         if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) 
         {
           String payload = http.getString();
-          //Serial.println(payload);
           return(SEARCH_NEEDLE("3GPP.SINR=", payload));
         }
       }else
       {
         Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
-        counterPingFailed++;
         return 0;
       }
 
@@ -91,9 +87,9 @@ int HTTP_CONNECT()
     }else
     {
       Serial.println("[HTTP] Unable to connect");
-      counterPingFailed++;
       return 0;
     }
+
   return 0;
 }
 
@@ -139,7 +135,7 @@ return IntSubResult;
 /////////////////////////////////////////
 //Перередергивание (ВЫКЛ -> ВКЛ) реле
 /////////////////////////////////////////
-void RelayOnOff()
+void ResetCoil()
 {
   Serial.println("Router Power OFF");
   //Включаем реле - посылаем высокий уровень сигнала, т.е. у роутера пропадает питание.
@@ -165,13 +161,7 @@ void setup()
   digitalWrite(0, LOW); 
 
   Serial.begin(115200);
-  //Длительная пауза. Т.к. модуль включается вместе с подачей питания на роутер
-  //надо подождать пока он загрузится, включится wifi точка доступа, заработает модем.
-  //Иначе, если пауза слишком мала, программа слишком рано начнёт делать свою работу,
-  //не обнаружит ответ от модема, и отключит всем питание. И так постоянно.
-  //30 секунд это нормальная пауза для первого включения. По крайней мере для DIR320.
-  //Вам стоит подобрать длительность паузы для своего роутера и модема.
-  delay(30000);
+  delay(60000);
   //Настройка WIFI
   WiFi.mode(WIFI_STA);
   WiFi.hostname(devHostName);
@@ -198,7 +188,6 @@ void loop()
   cycle++; //увеличиваем счётчик циклов на 1
   Serial.print("Cycle:"); Serial.println(cycle);
   Serial.print("CycleLimit:"); Serial.println(CycleLimit);
-    
   //Если подключены то отслеживаем страницу модема
   if ((WiFiMulti.run(wifiConnectTimeoutMs) == WL_CONNECTED)) 
   {
@@ -207,25 +196,35 @@ void loop()
     
     if(YotaStatus == 0)
     {
-      cycle = 0;
-      RelayOnOff();
+      counterHttpFailed++;
+      Serial.println("YotaStatus=0");
+      Serial.print("counterHttpFailed=");Serial.print(counterHttpFailed);
+      Serial.print("limitHttpFailed=");Serial.print(limitHttpFailed);
     }
   }else
   {
     Serial.println("WiFi not connected!");
-    counterPingFailed++;
-  }
-    
-  //Если в течение 10 циклов попытки подключения к WIFI не удались, 
-  //то ВЫКЛ/ВКЛ питание роутера и сами перезагрузимся.
-  if(counterPingFailed > 10)
-  {
-    RelayOnOff();
-    cycle = 0;
-    counterPingFailed = 0;
+    counterWIFIFailed++;
+    Serial.print("counterWIFIFailed=");Serial.print(counterWIFIFailed);
+    Serial.print("limitWIFIFailed=");Serial.print(limitWIFIFailed);
   }
 
-  
+  if(counterWIFIFailed > limitWIFIFailed)
+  {
+    cycle = 0;
+    counterWIFIFailed = 0;
+    counterHttpFailed = 0;
+    ResetCoil();
+  }
+  if(counterHttpFailed > limitHttpFailed)
+  {
+    cycle = 0;
+    counterHttpFailed = 0;
+    counterWIFIFailed = 0;
+    ResetCoil();
+  }
+
+
   //Если количество повторов цикла достигло ограничения, 
   //то перезагрузка роутера и модуля ESP
   //Т.к. иногда бывает ситуация:
@@ -237,10 +236,10 @@ void loop()
   //при вашем отстутствии на объекте.
   if(cycle >= CycleLimit)
   {
-    RelayOnOff();
     cycle = 0;
+    ResetCoil();
     ESP.restart();
   }
 
-  delay(CycleTime);  //пауза
+  delay(pauseLoopMS);  //пауза
 }
